@@ -94,3 +94,28 @@ smt_schedule/
 ## License
 
 Copyright © 2024 S&Y Industries. All rights reserved.
+
+# Server Configuration
+PORT=3000
+NODE_ENV=development
+
+# Database Configuration
+DB_HOST=localhost
+DB_PORT=5432
+DB_USERNAME=postgres
+DB_PASSWORD=postgres
+DB_DATABASE=smt_schedule
+
+# Authentication (Clerk)
+CLERK_SECRET_KEY=your_clerk_secret_key_here
+CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key_here
+
+# OpenAI (for schedule optimization)
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Cetec ERP Integration
+CETEC_API_URL=https://sandy.cetecerp.com
+CETEC_API_TOKEN=your_cetec_api_token_here
+
+# JWT (for internal token signing)
+JWT_SECRET=development_secret_key_change_in_production
