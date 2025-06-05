@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { ArrowTrendingUpIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import api from '../config/axios';
+import api, { useAuthInterceptor } from '../config/axios';
 
 interface DashboardStats {
   totalWorkOrders: number;
@@ -22,6 +22,9 @@ interface DashboardStats {
 }
 
 export default function Dashboard() {
+  // Set up auth interceptor
+  useAuthInterceptor();
+
   const { data: stats, isLoading, error } = useQuery<DashboardStats>({
     queryKey: ['dashboardStats'],
     queryFn: async () => {
