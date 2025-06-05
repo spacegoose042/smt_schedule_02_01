@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { ArrowTrendingUpIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import axios from 'axios';
+import api from '../config/axios';
 
 interface DashboardStats {
   totalWorkOrders: number;
@@ -25,7 +25,7 @@ export default function Dashboard() {
   const { data: stats, isLoading, error } = useQuery<DashboardStats>({
     queryKey: ['dashboardStats'],
     queryFn: async () => {
-      const { data } = await axios.get('/api/dashboard/stats');
+      const { data } = await api.get('/api/dashboard/stats');
       return data;
     },
   });
@@ -71,11 +71,11 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <p className="text-sm text-gray-500">Total</p>
-              <p className="text-2xl font-semibold text-gray-900">{stats?.totalWorkOrders}</p>
+              <p className="text-2xl font-semibold text-gray-900">{stats?.totalWorkOrders || 0}</p>
             </div>
             <div>
               <p className="text-sm text-gray-500">Scheduled</p>
-              <p className="text-2xl font-semibold text-gray-900">{stats?.scheduledWorkOrders}</p>
+              <p className="text-2xl font-semibold text-gray-900">{stats?.scheduledWorkOrders || 0}</p>
             </div>
           </div>
         </div>
@@ -86,11 +86,11 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <p className="text-sm text-gray-500">Active</p>
-              <p className="text-2xl font-semibold text-gray-900">{stats?.activeLines}</p>
+              <p className="text-2xl font-semibold text-gray-900">{stats?.activeLines || 0}</p>
             </div>
             <div>
               <p className="text-sm text-gray-500">Total</p>
-              <p className="text-2xl font-semibold text-gray-900">{stats?.totalLines}</p>
+              <p className="text-2xl font-semibold text-gray-900">{stats?.totalLines || 0}</p>
             </div>
           </div>
         </div>
@@ -99,7 +99,7 @@ export default function Dashboard() {
         <div className="card">
           <h2 className="text-lg font-medium text-gray-900 mb-2">Line Utilization</h2>
           <div className="space-y-3">
-            {stats?.lineUtilization.map((line) => (
+            {stats?.lineUtilization?.map((line) => (
               <div key={line.lineId} className="flex items-center justify-between">
                 <span className="text-sm text-gray-500">{line.name}</span>
                 <div className="flex items-center">
@@ -120,7 +120,7 @@ export default function Dashboard() {
       <div className="card">
         <h2 className="text-lg font-medium text-gray-900 mb-4">Upcoming Deadlines</h2>
         <div className="space-y-4">
-          {stats?.upcomingDeadlines.map((wo) => (
+          {stats?.upcomingDeadlines?.map((wo) => (
             <div
               key={wo.id}
               className={`flex items-center justify-between p-3 rounded-md ${
