@@ -1,4 +1,4 @@
-import { Between, LessThanOrEqual, MoreThanOrEqual, IsNull } from 'typeorm';
+import { Between, LessThanOrEqual, MoreThanOrEqual, IsNull, Not } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { WorkOrder } from '../models/WorkOrder';
 import { Line } from '../models/Line';
@@ -262,5 +262,57 @@ export class SchedulingService {
     }
 
     return scheduledOrders;
+  }
+
+  // Update work order schedule (for drag and drop)
+  public async updateWorkOrderSchedule(
+    workOrder: WorkOrder,
+    newLineId: string,
+    newStartDate: Date
+  ): Promise<WorkOrder> {
+    // Validate the line exists and is active
+    const line = await this.lineRepository.findOne({
+      where: { id: newLineId, status: LineStatus.ACTIVE }
+    });
+
+    if (!line) {
+      throw new Error('Invalid or inactive line selected');
+    }
+
+    // Calculate feeder requirements
+    const feederReqs = this.calculateFeederRequirements(workOrder);
+    
+    // Check if line meets feeder requirements
+    if (line.feederCapacity < feederReqs.min) {
+      throw new Error('Selected line does not have sufficient feeder capacity');
+    }
+
+    // Adjust start date to working hours
+    const adjustedStartDate = this.adjustToWorkingHours(newStartDate);
+
+    // Check for schedule conflicts
+    const conflictingOrders = await this.workOrderRepository.find({
+      where: {
+        lineId: newLineId,
+        id: Not(workOrder.id), // Exclude current work order
+        startDate: Between(
+          adjustedStartDate,
+          new Date(adjustedStartDate.getTime() + workOrder.totalJobTime * 60 * 1000)
+        )
+      }
+    });
+
+    if (conflictingOrders.length > 0) {
+      throw new Error('Schedule conflict detected with existing work orders');
+    }
+
+    // Update work order
+    workOrder.lineId = newLineId;
+    workOrder.startDate = adjustedStartDate;
+    // Calculate end date but don't store it since it's not in the model
+    const endDate = new Date(adjustedStartDate.getTime() + workOrder.totalJobTime * 60 * 1000);
+
+    // Save and return updated work order
+    return this.workOrderRepository.save(workOrder);
   }
 } 

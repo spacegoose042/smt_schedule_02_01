@@ -154,6 +154,8 @@ export class WorkOrderController {
   public scheduleWorkOrder = async (req: Request, res: Response): Promise<void> => {
     try {
       const { id } = req.params;
+      const { lineId, startDate } = req.body;
+
       const workOrder = await this.workOrderRepository.findOne({
         where: { id },
         relations: ['line']
@@ -164,13 +166,22 @@ export class WorkOrderController {
         return;
       }
 
-      if (!workOrder.clearToBuild) {
-        res.status(400).json({ message: 'Work order is not clear to build' });
-        return;
+      // For drag and drop, we'll allow scheduling even if not clear to build
+      // This gives more flexibility to production planners
+      try {
+        const scheduledWorkOrder = await this.schedulingService.updateWorkOrderSchedule(
+          workOrder,
+          lineId,
+          new Date(startDate)
+        );
+        res.json(scheduledWorkOrder);
+      } catch (error) {
+        if (error instanceof Error) {
+          res.status(400).json({ message: error.message });
+        } else {
+          res.status(500).json({ message: 'Failed to schedule work order' });
+        }
       }
-
-      const scheduledWorkOrder = await this.schedulingService.scheduleWorkOrder(workOrder);
-      res.json(scheduledWorkOrder);
     } catch (error) {
       res.status(500).json({ message: 'Failed to schedule work order', error });
     }
