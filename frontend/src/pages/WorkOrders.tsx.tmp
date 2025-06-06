@@ -250,24 +250,22 @@ export default function WorkOrders() {
 
   if (isLoading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="animate-pulse">
-          <div className="h-8 w-48 bg-gray-200 rounded mb-8"></div>
-          <div className="space-y-4">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="h-24 bg-gray-200 rounded-lg"></div>
-            ))}
-          </div>
+      <div className="animate-pulse">
+        <div className="h-8 w-48 bg-gray-200 rounded mb-8"></div>
+        <div className="space-y-4">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="h-24 bg-gray-200 rounded-lg"></div>
+          ))}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+    <div>
+      <div className="flex justify-between items-center mb-8">
         <h1 className="text-2xl font-semibold text-gray-900">Work Orders</h1>
-        <div className="flex flex-wrap gap-3">
+        <div className="flex gap-3">
           <select
             value={materialFilter}
             onChange={(e) => setMaterialFilter(e.target.value)}
@@ -317,12 +315,12 @@ export default function WorkOrders() {
         </div>
       </div>
 
-      <div className="space-y-4 mb-8">
+      <div className="space-y-4">
         {workOrders?.map((wo) => (
           <div key={wo.id} className="card">
-            <div className="flex flex-col sm:flex-row justify-between gap-4">
-              <div className="flex-1 min-w-0">
-                <div className="flex flex-wrap items-center gap-3 mb-2">
+            <div className="flex justify-between">
+              <div>
+                <div className="flex items-center gap-3 mb-2">
                   <h3 className="text-lg font-medium text-gray-900">WO #{wo.woId}</h3>
                   <span className={`flex items-center text-sm px-2 py-1 rounded-full ${getPriorityColor(wo.priority)}`}>
                     {wo.priority.charAt(0).toUpperCase() + wo.priority.slice(1)}
@@ -367,17 +365,17 @@ export default function WorkOrders() {
                   {wo.line && ` · Line: ${wo.line.name}`}
                 </div>
                 {wo.notes && (
-                  <div className="text-sm text-gray-600 mt-2 break-words">{wo.notes}</div>
+                  <div className="text-sm text-gray-600 mt-2">{wo.notes}</div>
                 )}
               </div>
-              <div className="flex items-start">
+              <div className="flex items-start gap-2">
                 {wo.materialList && wo.materialList.length > 0 && (
                   <button
                     onClick={() => {
                       setSelectedWorkOrder(wo);
                       setIsMaterialOpen(true);
                     }}
-                    className="flex items-center text-sm text-gray-600 hover:text-gray-900 whitespace-nowrap"
+                    className="flex items-center text-sm text-gray-600 hover:text-gray-900"
                   >
                     <ClipboardDocumentListIcon className="h-5 w-5 mr-1" />
                     View Materials

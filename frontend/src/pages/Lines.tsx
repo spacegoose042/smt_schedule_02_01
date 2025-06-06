@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
 import { PlusIcon, PencilSquareIcon } from '@heroicons/react/24/outline';
 import { Dialog } from '@headlessui/react';
+import api, { useAuthInterceptor } from '../config/axios';
 
 interface Line {
   id: string;
@@ -24,16 +24,19 @@ export default function Lines() {
   const [isOpen, setIsOpen] = useState(false);
   const [editingLine, setEditingLine] = useState<Line | null>(null);
 
+  // Set up auth interceptor
+  useAuthInterceptor();
+
   const { data: lines, isLoading } = useQuery<Line[]>({
     queryKey: ['lines'],
     queryFn: async () => {
-      const { data } = await axios.get('/api/lines');
+      const { data } = await api.get('/api/lines');
       return data;
     },
   });
 
   const createMutation = useMutation({
-    mutationFn: (newLine: LineFormData) => axios.post('/api/lines', newLine),
+    mutationFn: (newLine: LineFormData) => api.post('/api/lines', newLine),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['lines'] });
       setIsOpen(false);
@@ -42,7 +45,7 @@ export default function Lines() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<Line> }) =>
-      axios.put(`/api/lines/${id}`, data),
+      api.put(`/api/lines/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['lines'] });
       setIsOpen(false);
@@ -52,7 +55,7 @@ export default function Lines() {
 
   const updateStatusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: Line['status'] }) =>
-      axios.put(`/api/lines/${id}/status`, { status }),
+      api.put(`/api/lines/${id}/status`, { status }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['lines'] });
     },

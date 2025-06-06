@@ -4,22 +4,92 @@ import { WorkOrder } from '../models/WorkOrder';
 import { Line } from '../models/Line';
 import { LineStatus } from '../models/Line';
 
+interface SchedulingConstraints {
+  maxFeederCapacity: number;
+  minFeederCapacity: number;
+  preferredLineId?: string;
+  priority: number;
+}
+
 export class SchedulingService {
   private workOrderRepository = AppDataSource.getRepository(WorkOrder);
   private lineRepository = AppDataSource.getRepository(Line);
 
-  // Get available lines for scheduling
-  private async getAvailableLines(): Promise<Line[]> {
+  // Get available lines for scheduling with constraints
+  private async getAvailableLines(constraints: SchedulingConstraints): Promise<Line[]> {
     return this.lineRepository.find({
       where: {
         status: LineStatus.ACTIVE,
-        isActive: true
+        isActive: true,
+        feederCapacity: Between(constraints.minFeederCapacity, constraints.maxFeederCapacity)
       }
     });
   }
 
+  // Calculate feeder capacity requirements for a work order
+  private calculateFeederRequirements(workOrder: WorkOrder): { min: number; max: number } {
+    // Base requirement is number of parts
+    const baseRequirement = workOrder.numberOfParts;
+    
+    // Add 20% margin for double-sided boards
+    const maxRequirement = workOrder.isDoubleSided 
+      ? Math.ceil(baseRequirement * 1.2) 
+      : baseRequirement;
+
+    // Minimum requirement is 80% of max
+    const minRequirement = Math.floor(maxRequirement * 0.8);
+
+    return { min: minRequirement, max: maxRequirement };
+  }
+
+  // Calculate priority score for a work order (higher is more urgent)
+  private calculatePriorityScore(workOrder: WorkOrder): number {
+    const now = new Date();
+    const dueDate = new Date(workOrder.dueDate);
+    const daysUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    
+    let score = 0;
+
+    // Base priority from metadata (if set)
+    score += (workOrder.metadata?.priority || 0) * 100;
+
+    // Due date priority (exponential increase as due date approaches)
+    if (daysUntilDue <= 0) {
+      // Overdue orders get highest priority
+      score += 1000;
+    } else if (daysUntilDue <= 3) {
+      // Orders due within 3 days get high priority
+      score += 800;
+    } else if (daysUntilDue <= 7) {
+      // Orders due within a week get medium priority
+      score += 500;
+    }
+
+    // Add priority for orders with all materials available
+    if (workOrder.clearToBuild) {
+      score += 200;
+    }
+
+    // Add priority for complex orders (need more setup time)
+    if (workOrder.isDoubleSided) {
+      score += 50;
+    }
+    if (workOrder.numberOfParts > 50) {
+      score += 50;
+    }
+
+    return score;
+  }
+
   // Check if a line has capacity for a work order
   private async hasLineCapacity(line: Line, workOrder: WorkOrder, startTime: Date): Promise<boolean> {
+    // Check feeder capacity
+    const requirements = this.calculateFeederRequirements(workOrder);
+    if (line.feederCapacity < requirements.min) {
+      return false;
+    }
+
+    // Check time slot availability
     const existingOrders = await this.workOrderRepository.find({
       where: {
         lineId: line.id,
@@ -94,31 +164,62 @@ export class SchedulingService {
 
   // Schedule a single work order
   public async scheduleWorkOrder(workOrder: WorkOrder): Promise<WorkOrder> {
-    const availableLines = await this.getAvailableLines();
+    // Calculate job times if not already set
+    workOrder.calculateTotalJobTime();
+
+    // Calculate feeder requirements
+    const feederReqs = this.calculateFeederRequirements(workOrder);
+
+    // Get scheduling constraints
+    const constraints: SchedulingConstraints = {
+      maxFeederCapacity: feederReqs.max,
+      minFeederCapacity: feederReqs.min,
+      preferredLineId: workOrder.lineId, // If already assigned to a line
+      priority: this.calculatePriorityScore(workOrder)
+    };
+
+    // Get available lines that meet constraints
+    const availableLines = await this.getAvailableLines(constraints);
     if (availableLines.length === 0) {
-      throw new Error('No available lines for scheduling');
+      throw new Error('No available lines meet the requirements for this work order');
     }
 
     let bestLine: Line | null = null;
     let earliestStartDate: Date | null = null;
 
-    // Calculate job times if not already set
-    workOrder.calculateTotalJobTime();
-
-    // Find the earliest available slot across all lines
-    for (const line of availableLines) {
-      const startDate = await this.findNextAvailableSlot(
-        line,
-        workOrder,
-        new Date(Math.max(
-          Date.now(),
-          workOrder.materialAvailableDate.getTime()
-        ))
-      );
-
-      if (!earliestStartDate || startDate < earliestStartDate) {
+    // Prioritize preferred line if specified
+    if (constraints.preferredLineId) {
+      const preferredLine = availableLines.find(l => l.id === constraints.preferredLineId);
+      if (preferredLine) {
+        const startDate = await this.findNextAvailableSlot(
+          preferredLine,
+          workOrder,
+          new Date(Math.max(
+            Date.now(),
+            workOrder.materialAvailableDate.getTime()
+          ))
+        );
+        bestLine = preferredLine;
         earliestStartDate = startDate;
-        bestLine = line;
+      }
+    }
+
+    // If no preferred line or preferred line not available, find earliest slot on any line
+    if (!bestLine || !earliestStartDate) {
+      for (const line of availableLines) {
+        const startDate = await this.findNextAvailableSlot(
+          line,
+          workOrder,
+          new Date(Math.max(
+            Date.now(),
+            workOrder.materialAvailableDate.getTime()
+          ))
+        );
+
+        if (!earliestStartDate || startDate < earliestStartDate) {
+          earliestStartDate = startDate;
+          bestLine = line;
+        }
       }
     }
 
@@ -141,15 +242,17 @@ export class SchedulingService {
       where: {
         startDate: IsNull(),
         clearToBuild: true
-      },
-      order: {
-        dueDate: 'ASC' // Priority to earlier due dates
       }
     });
 
+    // Sort by priority score
+    const prioritizedOrders = unscheduledOrders.sort((a, b) => 
+      this.calculatePriorityScore(b) - this.calculatePriorityScore(a)
+    );
+
     const scheduledOrders: WorkOrder[] = [];
 
-    for (const order of unscheduledOrders) {
+    for (const order of prioritizedOrders) {
       try {
         const scheduledOrder = await this.scheduleWorkOrder(order);
         scheduledOrders.push(scheduledOrder);

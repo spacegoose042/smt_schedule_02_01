@@ -5,6 +5,7 @@ import {
   HomeIcon,
   ClipboardDocumentListIcon,
   CubeIcon,
+  CalendarIcon,
 } from '@heroicons/react/24/outline';
 
 interface LayoutProps {
@@ -15,6 +16,7 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: HomeIcon },
   { name: 'Work Orders', href: '/work-orders', icon: ClipboardDocumentListIcon },
   { name: 'SMT Lines', href: '/lines', icon: CubeIcon },
+  { name: 'Schedule', href: '/schedule', icon: CalendarIcon },
 ];
 
 export default function Layout({ children }: LayoutProps) {
@@ -23,7 +25,7 @@ export default function Layout({ children }: LayoutProps) {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Sidebar */}
-      <div className="fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg">
+      <div className="fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg shrink-0">
         <div className="flex h-16 shrink-0 items-center px-6">
           <img
             className="h-8 w-auto"
@@ -61,7 +63,7 @@ export default function Layout({ children }: LayoutProps) {
       </div>
 
       {/* Main content */}
-      <div className="pl-64">
+      <div className="pl-64 flex-1 min-w-0">
         {/* Top bar */}
         <div className="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-x-6 border-b border-gray-200 bg-white px-6 shadow-sm">
           <div className="flex flex-1 justify-end">
@@ -70,7 +72,7 @@ export default function Layout({ children }: LayoutProps) {
         </div>
 
         {/* Content area */}
-        <main className="py-8 px-6">
+        <main className="py-8 px-6 max-w-[calc(100vw-16rem)] overflow-x-hidden">
           {children}
         </main>
       </div>

@@ -1,6 +1,20 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { Line } from './Line';
 
+export enum MaterialStatus {
+  PENDING = 'pending',
+  PARTIAL = 'partial',
+  COMPLETE = 'complete',
+  MISSING = 'missing'
+}
+
+export enum WorkOrderPriority {
+  LOW = 'low',
+  MEDIUM = 'medium',
+  HIGH = 'high',
+  URGENT = 'urgent'
+}
+
 @Entity('work_orders')
 export class WorkOrder {
   @PrimaryGeneratedColumn('uuid')
@@ -29,6 +43,28 @@ export class WorkOrder {
 
   @Column('boolean', { default: false })
   clearToBuild!: boolean;
+
+  @Column({
+    type: 'enum',
+    enum: MaterialStatus,
+    default: MaterialStatus.PENDING
+  })
+  materialStatus!: MaterialStatus;
+
+  @Column({ type: 'jsonb', nullable: true })
+  materialList?: {
+    partNumber: string;
+    quantity: number;
+    available: number;
+    reference?: string;
+  }[];
+
+  @Column({
+    type: 'enum',
+    enum: WorkOrderPriority,
+    default: WorkOrderPriority.MEDIUM
+  })
+  priority!: WorkOrderPriority;
 
   @Column({ type: 'timestamp' })
   dueDate!: Date;
@@ -67,6 +103,9 @@ export class WorkOrder {
   @Column({ type: 'timestamp', nullable: true })
   completedAt?: Date;
 
+  @Column({ type: 'text', nullable: true })
+  notes?: string;
+
   // Calculated fields that will be set by service layer
   calculateSetupTearDownTime(): number {
     const baseTime = Math.max(5 * this.numberOfParts, 45);
@@ -80,5 +119,25 @@ export class WorkOrder {
     const assemblyTime = (this.numberOfAssemblies * this.assemblyCycleTime) / 60; // Convert seconds to minutes
     this.totalJobTime = setupTearDown * 2 + assemblyTime; // Setup + Assembly + Tear Down
     return this.totalJobTime;
+  }
+
+  updateMaterialStatus(): void {
+    if (!this.materialList || this.materialList.length === 0) {
+      this.materialStatus = MaterialStatus.PENDING;
+      return;
+    }
+
+    const totalParts = this.materialList.length;
+    const availableParts = this.materialList.filter(
+      material => material.available >= material.quantity
+    ).length;
+
+    if (availableParts === 0) {
+      this.materialStatus = MaterialStatus.MISSING;
+    } else if (availableParts === totalParts) {
+      this.materialStatus = MaterialStatus.COMPLETE;
+    } else {
+      this.materialStatus = MaterialStatus.PARTIAL;
+    }
   }
 } 

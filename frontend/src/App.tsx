@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Dashboard from './pages/Dashboard';
 import WorkOrders from './pages/WorkOrders';
 import Lines from './pages/Lines';
+import Schedule from './pages/Schedule';
 import Layout from './components/Layout';
 
 // Initialize React Query client
@@ -30,6 +31,7 @@ function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/work-orders" element={<WorkOrders />} />
                 <Route path="/lines" element={<Lines />} />
+                <Route path="/schedule" element={<Schedule />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Layout>

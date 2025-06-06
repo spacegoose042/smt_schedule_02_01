@@ -19,6 +19,9 @@ router.post('/optimize', workOrderController.optimizeSchedule);
 
 // PUT routes
 router.put('/:id', workOrderController.updateWorkOrder);
+router.put('/:id/material-list', workOrderController.updateMaterialList);
+router.put('/:id/material-availability', workOrderController.updateMaterialAvailability);
+router.put('/:id/clear-to-build', workOrderController.toggleClearToBuild);
 
 // DELETE routes
 router.delete('/:id', workOrderController.deleteWorkOrder);
