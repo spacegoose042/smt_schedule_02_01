@@ -7,6 +7,8 @@ import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/20/solid';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api, { useAuthInterceptor } from '../config/axios';
 import { ErrorBoundary } from 'react-error-boundary';
+import { toast } from 'react-toastify';
+import { MonthViewGrid } from '../components/MonthViewGrid';
 
 const ErrorFallback = ({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) => {
   return (
@@ -42,6 +44,10 @@ interface DragItem {
   id: string;
   sourceLineId: string;
   startDate: string;
+  woId: string;
+  assemblyCycleTime: number;
+  numberOfAssemblies: number;
+  totalJobTime: number;
 }
 
 interface Line {
@@ -61,6 +67,7 @@ interface WorkOrder {
   assemblyCycleTime: number;
   setupTime?: number;
   tearDownTime?: number;
+  verticalPosition?: number;
 }
 
 interface WorkOrderWithSpan extends WorkOrder {
@@ -92,84 +99,123 @@ const WorkOrderCard = ({ wo, lineId, getLineColor, currentDate, style = {} }: {
 
   const [{ isDragging }, drag] = useDrag(() => ({
     type: 'WORK_ORDER',
-    item: { type: 'WORK_ORDER', id: wo.id, sourceLineId: lineId, startDate: wo.startDate },
+    item: {
+      type: 'WORK_ORDER',
+      id: wo.id,
+      sourceLineId: lineId,
+      startDate: wo.startDate,
+      woId: wo.woId,
+      assemblyCycleTime: wo.assemblyCycleTime,
+      numberOfAssemblies: wo.numberOfAssemblies,
+      totalJobTime: wo.totalJobTime
+    },
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
-  }), [wo.id, lineId, wo.startDate]);
+  }), [wo, lineId]);
+
+  const tooltipContent = `
+    Work Order: ${wo.woId}
+    Start Date: ${woStartDate.toLocaleDateString()}
+    End Date: ${woEndDate.toLocaleDateString()}
+    Duration: ${Math.round(wo.totalJobTime)}m
+    Cycle Time: ${wo.assemblyCycleTime}m
+    Assemblies: ${wo.numberOfAssemblies}
+    Progress: ${Math.round(progress)}%
+  `;
 
   return (
     <div
       ref={drag}
       className={`
         ${getLineColor(wo.lineId)}
-        p-2 rounded-md shadow-sm mb-1 cursor-move
-        hover:shadow-md transition-all duration-200
-        ${isDragging ? 'opacity-50 scale-95' : 'opacity-100'}
+        px-2 py-1 rounded cursor-move
+        hover:shadow-sm transition-all duration-200
         select-none touch-none
         active:cursor-grabbing
         relative
+        ${isDragging ? 'opacity-50 scale-95' : 'opacity-100'}
       `}
       style={{
         ...style,
         opacity: isDragging ? 0.5 : 1,
         transform: isDragging ? 'scale(0.95)' : 'scale(1)',
       }}
+      title={tooltipContent}
     >
-      <div className="text-sm font-medium">{wo.woId}</div>
-      <div className="text-xs text-gray-600">
-        {wo.numberOfAssemblies} units • {Math.round(wo.totalJobTime)} min ({spanDays} days)
+      <div className="font-medium truncate">{wo.woId}</div>
+      <div className="flex items-center gap-1">
+        <div className="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">
+          <div 
+            className="h-full bg-primary-500 transition-all duration-300" 
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <div className="text-gray-600 whitespace-nowrap">{Math.round(wo.totalJobTime)}m</div>
       </div>
-      <div className="text-xs text-gray-500">
-        Started: {woStartDate.toLocaleDateString()}
-        {daysPassed >= 0 && ` (Day ${daysPassed + 1} of ${spanDays})`}
-      </div>
-      <div className="mt-1 h-1 bg-gray-200 rounded-full overflow-hidden">
-        <div 
-          className="h-full bg-primary-500 transition-all duration-300" 
-          style={{ width: `${progress}%` }}
-        />
+      <div className="text-xs text-gray-500 truncate">
+        {woStartDate.toLocaleDateString()} - {woEndDate.toLocaleDateString()}
       </div>
     </div>
   );
 };
 
-const DropCell = ({ date, lineId, workOrders, onDrop, getLineColor }: { 
+const DropCell = ({ date, lineId, workOrders, onDrop, getLineColor, line, lines }: { 
   date: Date; 
-  lineId: string; 
+  lineId: string | null; 
   workOrders: WorkOrder[];
   onDrop: (item: DragItem, date: Date, lineId: string) => void;
   getLineColor: (lineId: string | undefined) => string;
+  line: Line | null;
+  lines: Line[];
 }) => {
   const [{ isOver, canDrop }, drop] = useDrop(() => ({
     accept: 'WORK_ORDER',
-    canDrop: (item: DragItem) => true, // Allow drops from any line
+    canDrop: (item: DragItem) => {
+      // If this is a day cell in month view (lineId is null)
+      if (!lineId) {
+        const dropDate = new Date(date);
+        const isWeekend = dropDate.getDay() === 0 || dropDate.getDay() === 6;
+        return !isWeekend; // Allow dropping on weekdays
+      }
+
+      // For specific line cells, check all constraints
+      if (!line || line.status !== 'Active') {
+        return false;
+      }
+
+      const dropDate = new Date(date);
+      const isWeekend = dropDate.getDay() === 0 || dropDate.getDay() === 6;
+      if (isWeekend) {
+        return false;
+      }
+
+      return true;
+    },
     drop: (item: DragItem) => {
-      console.log('Dropping item:', item, 'onto line:', lineId, 'at date:', date);
-      onDrop(item, date, lineId);
+      // If dropping in a day cell (month view), find the first active line
+      const targetLineId = lineId || lines.find(l => l.status === 'Active')?.id;
+      if (!targetLineId) return;
+      
+      onDrop(item, date, targetLineId);
     },
     collect: (monitor) => ({
-      isOver: monitor.isOver(),
-      canDrop: monitor.canDrop(),
+      isOver: !!monitor.isOver(),
+      canDrop: !!monitor.canDrop(),
     }),
-  }), [date, lineId, onDrop]);
+  }), [date, lineId, line, onDrop, lines]);
 
   return (
     <div
       ref={drop}
       className={`
-        border-2 p-2 min-h-[100px]
-        transition-all duration-200
-        ${isOver ? 'border-primary-500 bg-primary-50' : 'border-gray-200'}
-        relative
-        z-20
+        relative p-1 border border-dashed
+        ${isOver && canDrop ? 'border-green-500 bg-green-50' : 'border-gray-200'}
+        ${!canDrop && isOver ? 'border-red-500 bg-red-50' : ''}
+        ${!lineId ? 'h-full' : 'h-8'} // Full height for day cells in month view
       `}
-      style={{ pointerEvents: 'all' }}
-    >
-      {workOrders.map(wo => (
-        <WorkOrderCard key={wo.id} wo={wo} lineId={lineId} getLineColor={getLineColor} currentDate={date} />
-      ))}
-    </div>
+      title={!canDrop ? 'Cannot drop here' : 'Drop to schedule'}
+    />
   );
 };
 
@@ -229,23 +275,32 @@ const MonthViewWorkOrder = ({ wo, lineId, getLineColor, date }: {
 
   const [{ isDragging }, drag] = useDrag(() => ({
     type: 'WORK_ORDER',
-    item: { type: 'WORK_ORDER', id: wo.id, sourceLineId: lineId, startDate: wo.startDate },
+    item: {
+      type: 'WORK_ORDER',
+      id: wo.id,
+      sourceLineId: lineId,
+      startDate: wo.startDate,
+      woId: wo.woId,
+      assemblyCycleTime: wo.assemblyCycleTime,
+      numberOfAssemblies: wo.numberOfAssemblies,
+      totalJobTime: wo.totalJobTime
+    },
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
-  }), [wo.id, lineId, wo.startDate]);
+  }), [wo, lineId]);
 
   return (
     <div
       ref={drag}
       className={`
         ${getLineColor(wo.lineId)}
-        p-1 rounded-md shadow-sm mb-1 cursor-move
-        hover:shadow-md transition-all duration-200
+        px-1 py-0.5 rounded cursor-move
+        hover:shadow-sm transition-all duration-200
         select-none touch-none
         active:cursor-grabbing
         relative
-        text-xs
+        text-[10px]
         ${isDragging ? 'opacity-50 scale-95' : 'opacity-100'}
       `}
       style={{
@@ -254,17 +309,14 @@ const MonthViewWorkOrder = ({ wo, lineId, getLineColor, date }: {
       }}
     >
       <div className="font-medium truncate">{wo.woId}</div>
-      <div className="text-gray-600 truncate">
-        {wo.numberOfAssemblies} units • {Math.round(wo.totalJobTime)} min
-      </div>
-      <div className="text-gray-500 truncate">
-        Day {daysPassed + 1} of {spanDays}
-      </div>
-      <div className="mt-1 h-1 bg-gray-200 rounded-full overflow-hidden">
-        <div 
-          className="h-full bg-primary-500 transition-all duration-300" 
-          style={{ width: `${progress}%` }}
-        />
+      <div className="flex items-center gap-1">
+        <div className="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">
+          <div 
+            className="h-full bg-primary-500 transition-all duration-300" 
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <div className="text-gray-600 whitespace-nowrap">{Math.round(wo.totalJobTime)}m</div>
       </div>
     </div>
   );
@@ -418,51 +470,113 @@ const Schedule = () => {
   };
 
   const handleDrop = async (item: DragItem, targetDate: Date, targetLineId: string) => {
+    // Show loading toast
+    const loadingToastId = toast.loading('Updating schedule...');
+
+    // Format the target date to start at 7:30 AM
+    const formattedDate = new Date(targetDate);
+    formattedDate.setHours(7, 30, 0, 0);
+
     try {
-      console.log('Dropping work order:', { item, targetDate, targetLineId });
-      const response = await api.post(`/api/work-orders/${item.id}/schedule`, {
+      const requestData = {
         lineId: targetLineId,
-        startDate: targetDate.toISOString()
+        startDate: formattedDate.toISOString()
+      };
+
+      console.log('Making API request:', {
+        url: `/api/work-orders/${item.id}/schedule`,
+        method: 'POST',
+        data: requestData,
+        workOrder: item,
+        targetDate: formattedDate
       });
+
+      const response = await api.post(`/api/work-orders/${item.id}/schedule`, requestData);
       
       if (response.data) {
         console.log('Schedule update successful:', response.data);
         queryClient.invalidateQueries({ queryKey: ['workOrders'] });
+        toast.update(loadingToastId, {
+          render: 'Work order rescheduled successfully',
+          type: 'success',
+          isLoading: false,
+          autoClose: 5000
+        });
       }
-    } catch (error) {
-      console.error('Failed to update work order schedule:', error);
-      // TODO: Show error toast
+    } catch (error: any) {
+      console.error('Failed to update work order schedule. Details:', {
+        message: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        responseData: error.response?.data,
+        request: {
+          workOrderId: item.id,
+          lineId: targetLineId,
+          startDate: formattedDate.toISOString()
+        },
+        error: JSON.stringify(error, null, 2)
+      });
+
+      // Show error message to user
+      const errorMessage = error.response?.data?.message || 'Failed to update work order schedule';
+      toast.update(loadingToastId, {
+        render: errorMessage,
+        type: 'error',
+        isLoading: false,
+        autoClose: 5000
+      });
+
+      // Log the full error object for debugging
+      console.error('Full error object:', error);
+      console.error('Response data:', error.response?.data);
+      console.error('Request config:', error.config);
     }
   };
 
   const renderDayView = () => (
     <div className="grid grid-cols-1 gap-4">
-      {lines.map((line: Line) => (
-        <div key={line.id} className="border rounded-lg overflow-hidden">
-          <div className="bg-gray-50 p-2 font-medium">{line.name}</div>
-          <div className="relative">
-            <DropCell
-              date={currentDate}
-              lineId={line.id}
-              workOrders={[]}
-              onDrop={handleDrop}
-              getLineColor={getLineColor}
-            />
-            {/* Render work orders with their spans */}
-            <div className="absolute inset-0">
-              {workOrdersByLine[line.id]?.map((wo: WorkOrder) => {
-                const woStartDate = new Date(wo.startDate);
-                const spanDays = calculateWorkOrderSpan(wo);
-                
-                // Only show work orders that start on or before the current date
-                // and end on or after the current date
-                const woEndDate = new Date(woStartDate);
-                woEndDate.setDate(woEndDate.getDate() + spanDays - 1);
-                
-                if (currentDate >= woStartDate && currentDate <= woEndDate) {
-                  return (
+      <div className="text-center p-2 font-medium border-b">
+        {currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+      </div>
+      {lines.map((line: Line) => {
+        const lineWorkOrders = workOrdersByLine[line.id]?.filter((wo: WorkOrder) => {
+          if (!wo.startDate) return false;
+          
+          const woStartDate = new Date(wo.startDate);
+          const spanDays = calculateWorkOrderSpan(wo);
+          const woEndDate = new Date(woStartDate);
+          woEndDate.setDate(woEndDate.getDate() + spanDays - 1);
+          
+          // Only show work orders that overlap with the current date
+          return (
+            currentDate.toDateString() >= woStartDate.toDateString() &&
+            currentDate.toDateString() <= woEndDate.toDateString()
+          );
+        }) || [];
+
+        return (
+          <div key={line.id} className="border rounded-lg overflow-hidden">
+            <div className="bg-gray-50 p-2">
+              <div className="font-medium">{line.name}</div>
+              <div className="text-xs text-gray-600">
+                Status: {line.status} • Feeder Capacity: {line.feederCapacity}
+              </div>
+            </div>
+            <div className="relative p-2 min-h-[100px]">
+              <DropCell
+                date={currentDate}
+                lineId={line.id}
+                workOrders={[]}
+                onDrop={handleDrop}
+                getLineColor={getLineColor}
+                line={line}
+                lines={lines}
+              />
+              {/* Render work orders */}
+              <div className="absolute inset-0 p-2">
+                {lineWorkOrders.map((wo: WorkOrder) => (
+                  <div key={wo.id} className="mb-2">
                     <WorkOrderCard
-                      key={wo.id}
                       wo={wo}
                       lineId={line.id}
                       getLineColor={getLineColor}
@@ -472,24 +586,26 @@ const Schedule = () => {
                         zIndex: 10
                       }}
                     />
-                  );
-                }
-                return null;
-              })}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 
   const renderWeekView = () => (
-    <div className="grid grid-cols-[auto_1fr] gap-4">
+    <div className="grid grid-cols-[auto_1fr] gap-0">
       <div className="sticky left-0 bg-white z-10">
-        <div className="h-10" />
+        <div className="h-[60px] border-b flex items-center justify-center font-medium" /> {/* Header spacer */}
         {lines.map((line: Line) => (
-          <div key={line.id} className="h-[100px] flex items-center p-2 font-medium">
-            {line.name}
+          <div key={line.id} className="h-[100px] flex flex-col justify-center p-4 border-b border-r">
+            <div className="font-medium">{line.name}</div>
+            <div className="text-xs text-gray-600">
+              Status: {line.status} • Feeder Capacity: {line.feederCapacity}
+            </div>
           </div>
         ))}
       </div>
@@ -497,54 +613,61 @@ const Schedule = () => {
         <div className="min-w-[1000px]">
           <div className="grid grid-cols-7">
             {dateRange.map((date) => (
-              <div key={date.toISOString()} className="text-center p-2 font-medium border-b">
+              <div key={date.toISOString()} className="text-center p-2 h-[60px] font-medium border-b flex items-center justify-center">
                 {date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
               </div>
             ))}
           </div>
           {lines.map((line: Line) => (
-            <div key={line.id} className="grid grid-cols-7 relative">
-              {dateRange.map((date) => (
-                <DropCell
-                  key={date.toISOString()}
-                  date={date}
-                  lineId={line.id}
-                  workOrders={[]}
-                  onDrop={handleDrop}
-                  getLineColor={getLineColor}
-                />
-              ))}
-              {/* Render work orders that span multiple days */}
-              <div className="absolute inset-0">
-                <div className="grid grid-cols-7 h-full">
-                  {workOrdersByLine[line.id]?.map((wo: WorkOrder) => {
-                    const woStartDate = new Date(wo.startDate);
-                    const spanDays = calculateWorkOrderSpan(wo);
-                    const startDayIndex = dateRange.findIndex(
-                      date => date.toDateString() === woStartDate.toDateString()
-                    );
-                    
-                    if (startDayIndex === -1) return null;
-                    
-                    return (
-                      <WorkOrderCard
-                        key={wo.id}
-                        wo={wo}
-                        lineId={line.id}
-                        getLineColor={getLineColor}
-                        currentDate={dateRange[startDayIndex]}
-                        style={{
-                          gridColumn: `${startDayIndex + 1} / span ${Math.min(spanDays, 7 - startDayIndex)}`,
-                          gridRow: '1',
-                          minHeight: '3rem',
-                          pointerEvents: 'auto',
-                          zIndex: 10
-                        }}
-                      />
-                    );
-                  })}
-                </div>
+            <div key={line.id} className="relative h-[100px] border-b">
+              <div className="grid grid-cols-7 h-full">
+                {dateRange.map((date) => (
+                  <DropCell
+                    key={date.toISOString()}
+                    date={date}
+                    lineId={line.id}
+                    workOrders={[]}
+                    onDrop={handleDrop}
+                    getLineColor={getLineColor}
+                    line={line}
+                    lines={lines}
+                  />
+                ))}
               </div>
+              {/* Render work orders that span multiple days */}
+              {workOrdersByLine[line.id]?.map((wo: WorkOrder) => {
+                const woStartDate = new Date(wo.startDate);
+                const spanDays = calculateWorkOrderSpan(wo);
+                const startDayIndex = dateRange.findIndex(
+                  date => date.toDateString() === woStartDate.toDateString()
+                );
+                
+                if (startDayIndex === -1) return null;
+                
+                return (
+                  <div
+                    key={wo.id}
+                    className="absolute"
+                    style={{
+                      left: `calc(${(startDayIndex / 7) * 100}% + 4px)`,
+                      width: `calc(${(Math.min(spanDays, 7 - startDayIndex) / 7) * 100}% - 8px)`,
+                      top: '4px',
+                      height: 'calc(100% - 8px)',
+                      zIndex: 10
+                    }}
+                  >
+                    <WorkOrderCard
+                      wo={wo}
+                      lineId={line.id}
+                      getLineColor={getLineColor}
+                      currentDate={dateRange[startDayIndex]}
+                      style={{
+                        height: '100%'
+                      }}
+                    />
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
@@ -553,67 +676,15 @@ const Schedule = () => {
   );
 
   const renderMonthView = () => (
-    <div className="grid grid-cols-7 gap-1">
-      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
-        <div key={day} className="text-center p-2 font-medium">
-          {day}
-        </div>
-      ))}
-      {dateRange.map((date) => (
-        <div
-          key={date.toISOString()}
-          className={`
-            border rounded-lg overflow-hidden
-            ${date.getMonth() === currentDate.getMonth() ? 'bg-white' : 'bg-gray-50'}
-            min-h-[120px]
-          `}
-        >
-          <div className="p-1 text-sm border-b bg-inherit">
-            {date.getDate()}
-          </div>
-          <div className="p-1">
-            {lines.map((line: Line) => {
-              const lineWorkOrders = workOrdersByLine[line.id]?.filter((wo: WorkOrder) => {
-                const woStartDate = new Date(wo.startDate);
-                const spanDays = calculateWorkOrderSpan(wo);
-                const woEndDate = new Date(woStartDate);
-                woEndDate.setDate(woEndDate.getDate() + spanDays - 1);
-                
-                // Check if the work order spans this date
-                const dateStart = new Date(date);
-                dateStart.setHours(0, 0, 0, 0);
-                const dateEnd = new Date(date);
-                dateEnd.setHours(23, 59, 59, 999);
-                
-                return (
-                  (woStartDate <= dateEnd && woEndDate >= dateStart) || // Work order spans this date
-                  (woStartDate >= dateStart && woStartDate <= dateEnd) // Work order starts on this date
-                );
-              });
-
-              if (lineWorkOrders?.length === 0) return null;
-
-              return (
-                <div key={line.id} className="mb-1">
-                  <div className="text-xs font-medium text-gray-500">{line.name}</div>
-                  <div className="space-y-1">
-                    {lineWorkOrders.map((wo) => (
-                      <MonthViewWorkOrder
-                        key={wo.id}
-                        wo={wo}
-                        lineId={line.id}
-                        getLineColor={getLineColor}
-                        date={date}
-                      />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-    </div>
+    <MonthViewGrid
+      dateRange={dateRange}
+      currentDate={currentDate}
+      lines={lines}
+      workOrdersByLine={workOrdersByLine}
+      onDrop={handleDrop}
+      getLineColor={getLineColor}
+      calculateWorkOrderSpan={calculateWorkOrderSpan}
+    />
   );
 
   if (isLinesLoading || isWorkOrdersLoading) {
@@ -667,7 +738,7 @@ const Schedule = () => {
           </div>
 
           <Paper className="flex flex-col h-full overflow-hidden">
-            <div className="w-full h-full overflow-auto">
+            <div className="w-full h-full overflow-auto p-4">
               {view === 'day' && renderDayView()}
               {view === 'week' && renderWeekView()}
               {view === 'month' && renderMonthView()}

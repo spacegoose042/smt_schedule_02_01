@@ -276,7 +276,7 @@ export class SchedulingService {
     });
 
     if (!line) {
-      throw new Error('Invalid or inactive line selected');
+      throw new Error(`Line ${newLineId} is either invalid or inactive. Please select an active line.`);
     }
 
     // Calculate feeder requirements
@@ -284,7 +284,10 @@ export class SchedulingService {
     
     // Check if line meets feeder requirements
     if (line.feederCapacity < feederReqs.min) {
-      throw new Error('Selected line does not have sufficient feeder capacity');
+      throw new Error(
+        `Line ${line.name} has insufficient feeder capacity. ` +
+        `Required: ${feederReqs.min}, Available: ${line.feederCapacity}`
+      );
     }
 
     // Adjust start date to working hours
@@ -303,7 +306,11 @@ export class SchedulingService {
     });
 
     if (conflictingOrders.length > 0) {
-      throw new Error('Schedule conflict detected with existing work orders');
+      const conflictingWOs = conflictingOrders.map(wo => wo.woId).join(', ');
+      throw new Error(
+        `Schedule conflict detected with existing work orders: ${conflictingWOs}. ` +
+        `Please choose a different time slot.`
+      );
     }
 
     // Update work order
