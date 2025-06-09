@@ -31,6 +31,7 @@ export class WorkOrderController {
   // Get all work orders
   public getAllWorkOrders = async (req: Request, res: Response): Promise<void> => {
     try {
+      console.log('Getting all work orders');
       const { status, priority, materialStatus } = req.query;
       
       const where: any = {};
@@ -49,6 +50,7 @@ export class WorkOrderController {
         where.materialStatus = In(Array.isArray(materialStatus) ? materialStatus : [materialStatus]);
       }
 
+      console.log('Query conditions:', where);
       const workOrders = await this.workOrderRepository.find({
         where,
         relations: ['line'],
@@ -57,8 +59,10 @@ export class WorkOrderController {
           dueDate: 'ASC'
         }
       });
+      console.log(`Found ${workOrders.length} work orders`);
       res.json(workOrders);
     } catch (error) {
+      console.error('Error fetching work orders:', error);
       res.status(500).json({ message: 'Failed to fetch work orders', error });
     }
   };

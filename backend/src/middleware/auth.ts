@@ -35,11 +35,34 @@ declare global {
 }
 
 // Authentication middleware
-export const requireAuth = ClerkExpressRequireAuth();
+export const requireAuth = (req: Request, res: Response, next: NextFunction) => {
+  console.log('Auth middleware called for path:', req.path);
+  console.log('Request headers:', {
+    authorization: req.headers.authorization,
+    'user-agent': req.headers['user-agent'],
+    host: req.headers.host,
+    origin: req.headers.origin
+  });
+  
+  const clerkAuth = ClerkExpressRequireAuth();
+  return clerkAuth(req, res, (err) => {
+    if (err) {
+      console.error('Auth error:', {
+        message: err.message,
+        name: err.name,
+        stack: err.stack
+      });
+      return res.status(401).json({ message: 'Unauthorized', error: err.message });
+    }
+    console.log('Auth successful for user:', req.auth?.userId);
+    next();
+  });
+};
 
 // Middleware to attach user info
 export const attachUserInfo = (req: Request, res: Response, next: NextFunction) => {
   if (req.auth?.userId) {
+    console.log('Attaching user info for:', req.auth.userId);
     req.user = {
       id: req.auth.userId,
       email: req.auth.sessionClaims?.email || '',
@@ -80,17 +103,17 @@ export const requireRole = (roles: string[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
     try {
       if (!req.user) {
-        return res.status(401).json({ message: 'Unauthorized - User not found' });
+        return res.status(401).json({ message: 'User information not available' });
       }
 
       if (!roles.includes(req.user.role)) {
-        return res.status(403).json({ message: 'Forbidden - Insufficient permissions' });
+        return res.status(403).json({ message: 'Insufficient permissions' });
       }
 
       next();
     } catch (error) {
-      console.error('Authorization error:', error);
-      res.status(500).json({ message: 'Internal server error during authorization' });
+      console.error('Error in role check:', error);
+      next(error);
     }
   };
 }; 

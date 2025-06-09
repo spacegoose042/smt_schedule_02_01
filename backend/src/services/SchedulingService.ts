@@ -5,11 +5,12 @@ import { Line } from '../models/Line';
 import { LineStatus } from '../models/Line';
 
 interface SchedulingConstraints {
-  maxFeederCapacity: number;
-  minFeederCapacity: number;
+  trolleysRequired: number;
   preferredLineId?: string;
   priority: number;
 }
+
+const TOTAL_TROLLEYS = 20; // Total trolleys available in the facility
 
 export class SchedulingService {
   private workOrderRepository = AppDataSource.getRepository(WorkOrder);
@@ -21,71 +22,40 @@ export class SchedulingService {
       where: {
         status: LineStatus.ACTIVE,
         isActive: true,
-        feederCapacity: Between(constraints.minFeederCapacity, constraints.maxFeederCapacity)
+        maxTrolleyCapacity: MoreThanOrEqual(constraints.trolleysRequired)
       }
     });
   }
 
-  // Calculate feeder capacity requirements for a work order
-  private calculateFeederRequirements(workOrder: WorkOrder): { min: number; max: number } {
-    // Base requirement is number of parts
-    const baseRequirement = workOrder.numberOfParts;
-    
-    // Add 20% margin for double-sided boards
-    const maxRequirement = workOrder.isDoubleSided 
-      ? Math.ceil(baseRequirement * 1.2) 
-      : baseRequirement;
+  // Calculate total trolleys in use for a given time period
+  private async calculateTrolleysInUse(startDate: Date, endDate: Date, excludeWorkOrderId?: string): Promise<number> {
+    const overlappingOrders = await this.workOrderRepository.find({
+      where: {
+        id: excludeWorkOrderId ? Not(excludeWorkOrderId) : undefined,
+        startDate: LessThanOrEqual(endDate),
+        isCompleted: false,
+        lineId: Not(IsNull())
+      }
+    });
 
-    // Minimum requirement is 80% of max
-    const minRequirement = Math.floor(maxRequirement * 0.8);
-
-    return { min: minRequirement, max: maxRequirement };
-  }
-
-  // Calculate priority score for a work order (higher is more urgent)
-  private calculatePriorityScore(workOrder: WorkOrder): number {
-    const now = new Date();
-    const dueDate = new Date(workOrder.dueDate);
-    const daysUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    
-    let score = 0;
-
-    // Base priority from metadata (if set)
-    score += (workOrder.metadata?.priority || 0) * 100;
-
-    // Due date priority (exponential increase as due date approaches)
-    if (daysUntilDue <= 0) {
-      // Overdue orders get highest priority
-      score += 1000;
-    } else if (daysUntilDue <= 3) {
-      // Orders due within 3 days get high priority
-      score += 800;
-    } else if (daysUntilDue <= 7) {
-      // Orders due within a week get medium priority
-      score += 500;
-    }
-
-    // Add priority for orders with all materials available
-    if (workOrder.clearToBuild) {
-      score += 200;
-    }
-
-    // Add priority for complex orders (need more setup time)
-    if (workOrder.isDoubleSided) {
-      score += 50;
-    }
-    if (workOrder.numberOfParts > 50) {
-      score += 50;
-    }
-
-    return score;
+    return overlappingOrders.reduce((total, order) => total + order.trolleysRequired, 0);
   }
 
   // Check if a line has capacity for a work order
   private async hasLineCapacity(line: Line, workOrder: WorkOrder, startTime: Date): Promise<boolean> {
-    // Check feeder capacity
-    const requirements = this.calculateFeederRequirements(workOrder);
-    if (line.feederCapacity < requirements.min) {
+    // Check trolley capacity
+    if (line.maxTrolleyCapacity < workOrder.trolleysRequired) {
+      return false;
+    }
+
+    // Calculate end time for this work order
+    const endTime = new Date(startTime.getTime() + workOrder.totalJobTime * 60 * 1000);
+
+    // Get total trolleys that would be in use during this period
+    const trolleysInUse = await this.calculateTrolleysInUse(startTime, endTime, workOrder.id);
+
+    // Check if adding this work order would exceed total trolley capacity
+    if (trolleysInUse + workOrder.trolleysRequired > TOTAL_TROLLEYS) {
       return false;
     }
 
@@ -93,7 +63,7 @@ export class SchedulingService {
     const existingOrders = await this.workOrderRepository.find({
       where: {
         lineId: line.id,
-        startDate: Between(startTime, new Date(startTime.getTime() + workOrder.totalJobTime * 60 * 1000))
+        startDate: Between(startTime, endTime)
       }
     });
 
@@ -130,33 +100,26 @@ export class SchedulingService {
     return candidateTime;
   }
 
-  // Adjust time to working hours (7:30 AM - 4:30 PM, Mon-Fri)
+  // Adjust time to working hours (7:30 AM - 4:30 PM)
   private adjustToWorkingHours(date: Date): Date {
     const adjustedDate = new Date(date);
-    
-    // Set to local timezone
+    adjustedDate.setSeconds(0);
+    adjustedDate.setMilliseconds(0);
+
     const hours = adjustedDate.getHours();
     const minutes = adjustedDate.getMinutes();
-    const dayOfWeek = adjustedDate.getDay();
+    const totalMinutes = hours * 60 + minutes;
 
-    // If weekend, move to Monday
-    if (dayOfWeek === 0) { // Sunday
-      adjustedDate.setDate(adjustedDate.getDate() + 1);
-      adjustedDate.setHours(7, 30, 0, 0);
-    } else if (dayOfWeek === 6) { // Saturday
-      adjustedDate.setDate(adjustedDate.getDate() + 2);
-      adjustedDate.setHours(7, 30, 0, 0);
+    // Before 7:30 AM
+    if (totalMinutes < 450) { // 7:30 = 7 * 60 + 30 = 450
+      adjustedDate.setHours(7);
+      adjustedDate.setMinutes(30);
     }
-
-    // If before 7:30 AM, set to 7:30 AM
-    if (hours < 7 || (hours === 7 && minutes < 30)) {
-      adjustedDate.setHours(7, 30, 0, 0);
-    }
-    // If after 4:30 PM, set to 7:30 AM next day
-    else if (hours > 16 || (hours === 16 && minutes > 30)) {
+    // After 4:30 PM
+    else if (totalMinutes > 1050) { // 16:30 = 16 * 60 + 30 = 990
       adjustedDate.setDate(adjustedDate.getDate() + 1);
-      adjustedDate.setHours(7, 30, 0, 0);
-      return this.adjustToWorkingHours(adjustedDate); // Recursive call to handle weekends
+      adjustedDate.setHours(7);
+      adjustedDate.setMinutes(30);
     }
 
     return adjustedDate;
@@ -166,14 +129,11 @@ export class SchedulingService {
   public async scheduleWorkOrder(workOrder: WorkOrder): Promise<WorkOrder> {
     // Calculate job times if not already set
     workOrder.calculateTotalJobTime();
-
-    // Calculate feeder requirements
-    const feederReqs = this.calculateFeederRequirements(workOrder);
+    workOrder.calculateTrolleysRequired();
 
     // Get scheduling constraints
     const constraints: SchedulingConstraints = {
-      maxFeederCapacity: feederReqs.max,
-      minFeederCapacity: feederReqs.min,
+      trolleysRequired: workOrder.trolleysRequired,
       preferredLineId: workOrder.lineId, // If already assigned to a line
       priority: this.calculatePriorityScore(workOrder)
     };
@@ -236,6 +196,48 @@ export class SchedulingService {
     return this.workOrderRepository.save(workOrder);
   }
 
+  // Calculate priority score for a work order (higher is more urgent)
+  private calculatePriorityScore(workOrder: WorkOrder): number {
+    const now = new Date();
+    const dueDate = new Date(workOrder.dueDate);
+    const daysUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    
+    let score = 0;
+
+    // Base priority from metadata (if set)
+    score += (workOrder.metadata?.priority || 0) * 100;
+
+    // Due date priority (exponential increase as due date approaches)
+    if (daysUntilDue <= 0) {
+      // Overdue orders get highest priority
+      score += 1000;
+    } else if (daysUntilDue <= 3) {
+      // Orders due within 3 days get high priority
+      score += 800;
+    } else if (daysUntilDue <= 7) {
+      // Orders due within a week get medium priority
+      score += 500;
+    }
+
+    // Add priority for orders with all materials available
+    if (workOrder.clearToBuild) {
+      score += 200;
+    }
+
+    // Add priority for complex orders (need more setup time)
+    if (workOrder.isDoubleSided) {
+      score += 50;
+    }
+    if (workOrder.numberOfParts > 50) {
+      score += 50;
+    }
+
+    // Add priority for orders requiring more trolleys (harder to schedule)
+    score += workOrder.trolleysRequired * 25;
+
+    return score;
+  }
+
   // Optimize schedule for all unscheduled work orders
   public async optimizeSchedule(): Promise<WorkOrder[]> {
     const unscheduledOrders = await this.workOrderRepository.find({
@@ -279,29 +281,38 @@ export class SchedulingService {
       throw new Error(`Line ${newLineId} is either invalid or inactive. Please select an active line.`);
     }
 
-    // Calculate feeder requirements
-    const feederReqs = this.calculateFeederRequirements(workOrder);
+    // Ensure trolley requirements are calculated
+    workOrder.calculateTrolleysRequired();
     
-    // Check if line meets feeder requirements
-    if (line.feederCapacity < feederReqs.min) {
+    // Check if line meets trolley requirements
+    if (line.maxTrolleyCapacity < workOrder.trolleysRequired) {
       throw new Error(
-        `Line ${line.name} has insufficient feeder capacity. ` +
-        `Required: ${feederReqs.min}, Available: ${line.feederCapacity}`
+        `Line ${line.name} has insufficient trolley capacity. ` +
+        `Required: ${workOrder.trolleysRequired}, Maximum: ${line.maxTrolleyCapacity}`
       );
     }
 
     // Adjust start date to working hours
     const adjustedStartDate = this.adjustToWorkingHours(newStartDate);
 
+    // Calculate end date
+    const endDate = new Date(adjustedStartDate.getTime() + workOrder.totalJobTime * 60 * 1000);
+
+    // Check trolley availability across all lines
+    const trolleysInUse = await this.calculateTrolleysInUse(adjustedStartDate, endDate, workOrder.id);
+    if (trolleysInUse + workOrder.trolleysRequired > TOTAL_TROLLEYS) {
+      throw new Error(
+        `Insufficient trolleys available for this time slot. ` +
+        `Required: ${workOrder.trolleysRequired}, Available: ${TOTAL_TROLLEYS - trolleysInUse}`
+      );
+    }
+
     // Check for schedule conflicts
     const conflictingOrders = await this.workOrderRepository.find({
       where: {
         lineId: newLineId,
-        id: Not(workOrder.id), // Exclude current work order
-        startDate: Between(
-          adjustedStartDate,
-          new Date(adjustedStartDate.getTime() + workOrder.totalJobTime * 60 * 1000)
-        )
+        id: Not(workOrder.id),
+        startDate: Between(adjustedStartDate, endDate)
       }
     });
 
@@ -316,8 +327,6 @@ export class SchedulingService {
     // Update work order
     workOrder.lineId = newLineId;
     workOrder.startDate = adjustedStartDate;
-    // Calculate end date but don't store it since it's not in the model
-    const endDate = new Date(adjustedStartDate.getTime() + workOrder.totalJobTime * 60 * 1000);
 
     // Save and return updated work order
     return this.workOrderRepository.save(workOrder);

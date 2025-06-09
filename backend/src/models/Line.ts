@@ -25,6 +25,9 @@ export class Line {
   @Column('int')
   feederCapacity!: number;
 
+  @Column('int', { default: 8 })
+  maxTrolleyCapacity!: number;
+
   @Column({ type: 'text', nullable: true })
   description?: string;
 

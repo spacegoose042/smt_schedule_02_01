@@ -38,6 +38,9 @@ export class WorkOrder {
   @Column('boolean', { default: false })
   isDoubleSided!: boolean;
 
+  @Column('int', { default: 1 })
+  trolleysRequired!: number;
+
   @Column({ type: 'timestamp' })
   materialAvailableDate!: Date;
 
@@ -114,11 +117,13 @@ export class WorkOrder {
     return baseTime;
   }
 
-  calculateTotalJobTime(): number {
-    const setupTearDown = this.calculateSetupTearDownTime();
-    const assemblyTime = (this.numberOfAssemblies * this.assemblyCycleTime) / 60; // Convert seconds to minutes
-    this.totalJobTime = setupTearDown * 2 + assemblyTime; // Setup + Assembly + Tear Down
-    return this.totalJobTime;
+  calculateTotalJobTime(): void {
+    // Calculate setup and tear down time
+    this.calculateSetupTearDownTime();
+    
+    // Calculate total job time
+    const totalAssemblyTime = (this.assemblyCycleTime * this.numberOfAssemblies) / 60; // Convert to minutes
+    this.totalJobTime = this.setupTime + totalAssemblyTime + this.tearDownTime;
   }
 
   updateMaterialStatus(): void {

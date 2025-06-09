@@ -1,5 +1,5 @@
 import React from 'react';
-import { DndProvider, useDrag, useDrop } from 'react-dnd';
+import { DndProvider, useDrag } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { Paper, Button, CircularProgress, IconButton, ToggleButton, ToggleButtonGroup } from '@mui/material';
 import { ArrowPathIcon } from '@heroicons/react/24/outline';
@@ -9,6 +9,8 @@ import api, { useAuthInterceptor } from '../config/axios';
 import { ErrorBoundary } from 'react-error-boundary';
 import { toast } from 'react-toastify';
 import { MonthViewGrid } from '../components/MonthViewGrid';
+import { DragPreview } from '../components/DragPreview';
+import { DropCell } from '../components/DropCell';
 
 const ErrorFallback = ({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) => {
   return (
@@ -29,14 +31,14 @@ type ViewType = 'day' | 'week' | 'month';
 
 // Color mapping for SMT lines
 const LINE_COLORS = [
-  'bg-blue-100',
-  'bg-green-100',
-  'bg-purple-100',
-  'bg-orange-100',
-  'bg-pink-100',
-  'bg-yellow-100',
-  'bg-indigo-100',
-  'bg-red-100'
+  'bg-blue-200 hover:bg-blue-300',
+  'bg-green-200 hover:bg-green-300',
+  'bg-purple-200 hover:bg-purple-300',
+  'bg-orange-200 hover:bg-orange-300',
+  'bg-pink-200 hover:bg-pink-300',
+  'bg-yellow-200 hover:bg-yellow-300',
+  'bg-indigo-200 hover:bg-indigo-300',
+  'bg-red-200 hover:bg-red-300'
 ];
 
 interface DragItem {
@@ -160,65 +162,6 @@ const WorkOrderCard = ({ wo, lineId, getLineColor, currentDate, style = {} }: {
   );
 };
 
-const DropCell = ({ date, lineId, workOrders, onDrop, getLineColor, line, lines }: { 
-  date: Date; 
-  lineId: string | null; 
-  workOrders: WorkOrder[];
-  onDrop: (item: DragItem, date: Date, lineId: string) => void;
-  getLineColor: (lineId: string | undefined) => string;
-  line: Line | null;
-  lines: Line[];
-}) => {
-  const [{ isOver, canDrop }, drop] = useDrop(() => ({
-    accept: 'WORK_ORDER',
-    canDrop: (item: DragItem) => {
-      // If this is a day cell in month view (lineId is null)
-      if (!lineId) {
-        const dropDate = new Date(date);
-        const isWeekend = dropDate.getDay() === 0 || dropDate.getDay() === 6;
-        return !isWeekend; // Allow dropping on weekdays
-      }
-
-      // For specific line cells, check all constraints
-      if (!line || line.status !== 'Active') {
-        return false;
-      }
-
-      const dropDate = new Date(date);
-      const isWeekend = dropDate.getDay() === 0 || dropDate.getDay() === 6;
-      if (isWeekend) {
-        return false;
-      }
-
-      return true;
-    },
-    drop: (item: DragItem) => {
-      // If dropping in a day cell (month view), find the first active line
-      const targetLineId = lineId || lines.find(l => l.status === 'Active')?.id;
-      if (!targetLineId) return;
-      
-      onDrop(item, date, targetLineId);
-    },
-    collect: (monitor) => ({
-      isOver: !!monitor.isOver(),
-      canDrop: !!monitor.canDrop(),
-    }),
-  }), [date, lineId, line, onDrop, lines]);
-
-  return (
-    <div
-      ref={drop}
-      className={`
-        relative p-1 border border-dashed
-        ${isOver && canDrop ? 'border-green-500 bg-green-50' : 'border-gray-200'}
-        ${!canDrop && isOver ? 'border-red-500 bg-red-50' : ''}
-        ${!lineId ? 'h-full' : 'h-8'} // Full height for day cells in month view
-      `}
-      title={!canDrop ? 'Cannot drop here' : 'Drop to schedule'}
-    />
-  );
-};
-
 const MultiDayWorkOrders = ({ workOrders, lineId, getLineColor, dateRange }: {
   workOrders: WorkOrder[];
   lineId: string;
@@ -325,7 +268,7 @@ const MonthViewWorkOrder = ({ wo, lineId, getLineColor, date }: {
 const Schedule = () => {
   useAuthInterceptor();
   const queryClient = useQueryClient();
-  const [currentDate, setCurrentDate] = React.useState<Date>(new Date());
+  const [currentDate, setCurrentDate] = React.useState<Date>(new Date('2024-06-08'));
   const [view, setView] = React.useState<ViewType>('week');
 
   // Query for SMT lines
@@ -470,66 +413,41 @@ const Schedule = () => {
   };
 
   const handleDrop = async (item: DragItem, targetDate: Date, targetLineId: string) => {
-    // Show loading toast
-    const loadingToastId = toast.loading('Updating schedule...');
-
-    // Format the target date to start at 7:30 AM
-    const formattedDate = new Date(targetDate);
-    formattedDate.setHours(7, 30, 0, 0);
-
     try {
-      const requestData = {
-        lineId: targetLineId,
-        startDate: formattedDate.toISOString()
-      };
+      // Adjust target date to start of day for consistency
+      const adjustedDate = new Date(targetDate);
+      adjustedDate.setHours(7, 30, 0, 0); // Set to 7:30 AM
 
-      console.log('Making API request:', {
-        url: `/api/work-orders/${item.id}/schedule`,
-        method: 'POST',
-        data: requestData,
-        workOrder: item,
-        targetDate: formattedDate
+      // Optimistically update the UI
+      const updatedWorkOrders = workOrders.map(wo => {
+        if (wo.id === item.id) {
+          return {
+            ...wo,
+            startDate: adjustedDate.toISOString(),
+            lineId: targetLineId
+          };
+        }
+        return wo;
       });
 
-      const response = await api.post(`/api/work-orders/${item.id}/schedule`, requestData);
-      
-      if (response.data) {
-        console.log('Schedule update successful:', response.data);
-        queryClient.invalidateQueries({ queryKey: ['workOrders'] });
-        toast.update(loadingToastId, {
-          render: 'Work order rescheduled successfully',
-          type: 'success',
-          isLoading: false,
-          autoClose: 5000
-        });
-      }
+      // Update the queryClient cache immediately
+      queryClient.setQueryData(['workOrders'], updatedWorkOrders);
+
+      // Make the API call
+      await api.post(`/api/work-orders/${item.id}/schedule`, {
+        startDate: adjustedDate.toISOString(),
+        lineId: targetLineId
+      });
+
+      // Refetch to ensure consistency
+      queryClient.invalidateQueries(['workOrders']);
+
+      toast.success('Work order rescheduled successfully');
     } catch (error: any) {
-      console.error('Failed to update work order schedule. Details:', {
-        message: error.message,
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        responseData: error.response?.data,
-        request: {
-          workOrderId: item.id,
-          lineId: targetLineId,
-          startDate: formattedDate.toISOString()
-        },
-        error: JSON.stringify(error, null, 2)
-      });
-
-      // Show error message to user
-      const errorMessage = error.response?.data?.message || 'Failed to update work order schedule';
-      toast.update(loadingToastId, {
-        render: errorMessage,
-        type: 'error',
-        isLoading: false,
-        autoClose: 5000
-      });
-
-      // Log the full error object for debugging
-      console.error('Full error object:', error);
-      console.error('Response data:', error.response?.data);
-      console.error('Request config:', error.config);
+      console.error('Failed to reschedule work order:', error);
+      // Revert the optimistic update
+      queryClient.invalidateQueries(['workOrders']);
+      toast.error(error.response?.data?.message || 'Failed to reschedule work order');
     }
   };
 
@@ -539,20 +457,30 @@ const Schedule = () => {
         {currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
       </div>
       {lines.map((line: Line) => {
-        const lineWorkOrders = workOrdersByLine[line.id]?.filter((wo: WorkOrder) => {
+        // Get unique work orders for this line and date
+        const lineWorkOrders = [...new Set(workOrdersByLine[line.id])]?.filter((wo: WorkOrder) => {
           if (!wo.startDate) return false;
           
           const woStartDate = new Date(wo.startDate);
-          const spanDays = calculateWorkOrderSpan(wo);
+          woStartDate.setHours(0, 0, 0, 0);
           const woEndDate = new Date(woStartDate);
-          woEndDate.setDate(woEndDate.getDate() + spanDays - 1);
+          woEndDate.setDate(woEndDate.getDate() + calculateWorkOrderSpan(wo) - 1);
+          woEndDate.setHours(23, 59, 59, 999);
+          
+          const currentDateStart = new Date(currentDate);
+          currentDateStart.setHours(0, 0, 0, 0);
           
           // Only show work orders that overlap with the current date
           return (
-            currentDate.toDateString() >= woStartDate.toDateString() &&
-            currentDate.toDateString() <= woEndDate.toDateString()
+            currentDateStart >= woStartDate &&
+            currentDateStart <= woEndDate
           );
         }) || [];
+
+        // Sort work orders by start date
+        const sortedWorkOrders = lineWorkOrders.sort((a, b) => 
+          new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
+        );
 
         return (
           <div key={line.id} className="border rounded-lg overflow-hidden">
@@ -574,7 +502,7 @@ const Schedule = () => {
               />
               {/* Render work orders */}
               <div className="absolute inset-0 p-2">
-                {lineWorkOrders.map((wo: WorkOrder) => (
+                {sortedWorkOrders.map((wo: WorkOrder) => (
                   <div key={wo.id} className="mb-2">
                     <WorkOrderCard
                       wo={wo}
@@ -599,11 +527,24 @@ const Schedule = () => {
   const renderWeekView = () => (
     <div className="grid grid-cols-[auto_1fr] gap-0">
       <div className="sticky left-0 bg-white z-10">
-        <div className="h-[60px] border-b flex items-center justify-center font-medium" /> {/* Header spacer */}
+        <div className="h-[60px] border-b flex items-center justify-center font-medium bg-gray-50">
+          Lines
+        </div>
         {lines.map((line: Line) => (
-          <div key={line.id} className="h-[100px] flex flex-col justify-center p-4 border-b border-r">
-            <div className="font-medium">{line.name}</div>
-            <div className="text-xs text-gray-600">
+          <div 
+            key={line.id} 
+            className={`
+              h-[100px] flex flex-col justify-center p-4 border-b border-r
+              ${line.status === 'Active' ? 'bg-white' : 'bg-gray-50'}
+            `}
+          >
+            <div className="flex items-center gap-2">
+              <div 
+                className={`w-2 h-2 rounded-full ${line.status === 'Active' ? 'bg-green-500' : 'bg-gray-400'}`} 
+              />
+              <div className="font-medium">{line.name}</div>
+            </div>
+            <div className="text-xs text-gray-600 mt-1">
               Status: {line.status} • Feeder Capacity: {line.feederCapacity}
             </div>
           </div>
@@ -613,13 +554,25 @@ const Schedule = () => {
         <div className="min-w-[1000px]">
           <div className="grid grid-cols-7">
             {dateRange.map((date) => (
-              <div key={date.toISOString()} className="text-center p-2 h-[60px] font-medium border-b flex items-center justify-center">
-                {date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+              <div 
+                key={date.toISOString()} 
+                className="text-center p-2 h-[60px] font-medium border-b flex flex-col items-center justify-center bg-gray-50"
+              >
+                <div>{date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                <div className="text-sm text-gray-600">
+                  {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                </div>
               </div>
             ))}
           </div>
           {lines.map((line: Line) => (
-            <div key={line.id} className="relative h-[100px] border-b">
+            <div 
+              key={line.id} 
+              className={`
+                relative h-[100px] border-b
+                ${line.status === 'Active' ? '' : 'bg-gray-50/50'}
+              `}
+            >
               <div className="grid grid-cols-7 h-full">
                 {dateRange.map((date) => (
                   <DropCell
@@ -687,66 +640,59 @@ const Schedule = () => {
     />
   );
 
-  if (isLinesLoading || isWorkOrdersLoading) {
-    return (
-      <div className="h-[700px] bg-white rounded-lg shadow flex items-center justify-center">
-        <CircularProgress />
-      </div>
-    );
-  }
-
   return (
-    <DndProvider backend={HTML5Backend}>
-      <div className="h-[700px] w-full bg-white rounded-lg shadow">
-        <ErrorBoundary FallbackComponent={ErrorFallback}>
-          <div className="flex justify-between items-center p-4 border-b">
-            <div className="flex items-center space-x-4">
-              <h1 className="text-2xl font-semibold text-gray-900">Production Schedule</h1>
-              <div className="flex items-center space-x-2">
-                <IconButton onClick={handlePrevious} size="small">
-                  <ChevronLeftIcon className="h-5 w-5" />
-                </IconButton>
-                <Button
-                  variant="text"
-                  onClick={handleToday}
-                  className="text-primary-600 hover:text-primary-700"
-                >
-                  Today
-                </Button>
-                <IconButton onClick={handleNext} size="small">
-                  <ChevronRightIcon className="h-5 w-5" />
-                </IconButton>
-              </div>
-              <ToggleButtonGroup
-                value={view}
-                exclusive
-                onChange={handleViewChange}
-                size="small"
-              >
-                <ToggleButton value="day">Day</ToggleButton>
-                <ToggleButton value="week">Week</ToggleButton>
-                <ToggleButton value="month">Month</ToggleButton>
-              </ToggleButtonGroup>
-            </div>
+    <ErrorBoundary FallbackComponent={ErrorFallback}>
+      <div className="p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold text-gray-900">Production Schedule</h1>
+          <div className="flex items-center space-x-2">
+            <IconButton onClick={handlePrevious} size="small">
+              <ChevronLeftIcon className="h-5 w-5" />
+            </IconButton>
             <Button
-              startIcon={<ArrowPathIcon className="h-5 w-5" />}
-              onClick={() => {}}
+              variant="text"
+              onClick={handleToday}
               className="text-primary-600 hover:text-primary-700"
             >
-              Optimize Schedule
+              Today
             </Button>
+            <IconButton onClick={handleNext} size="small">
+              <ChevronRightIcon className="h-5 w-5" />
+            </IconButton>
           </div>
-
-          <Paper className="flex flex-col h-full overflow-hidden">
-            <div className="w-full h-full overflow-auto p-4">
-              {view === 'day' && renderDayView()}
-              {view === 'week' && renderWeekView()}
-              {view === 'month' && renderMonthView()}
-            </div>
-          </Paper>
-        </ErrorBoundary>
+          <ToggleButtonGroup
+            value={view}
+            exclusive
+            onChange={handleViewChange}
+            size="small"
+          >
+            <ToggleButton value="day">Day</ToggleButton>
+            <ToggleButton value="week">Week</ToggleButton>
+            <ToggleButton value="month">Month</ToggleButton>
+          </ToggleButtonGroup>
+          <Button
+            startIcon={<ArrowPathIcon className="h-5 w-5" />}
+            onClick={() => {}}
+            className="text-primary-600 hover:text-primary-700"
+          >
+            Optimize Schedule
+          </Button>
+        </div>
+        
+        {isLinesLoading || isWorkOrdersLoading ? (
+          <div className="flex items-center justify-center h-[700px]">
+            <CircularProgress />
+          </div>
+        ) : (
+          <>
+            {view === 'day' && renderDayView()}
+            {view === 'week' && renderWeekView()}
+            {view === 'month' && renderMonthView()}
+            <DragPreview />
+          </>
+        )}
       </div>
-    </DndProvider>
+    </ErrorBoundary>
   );
 };
 

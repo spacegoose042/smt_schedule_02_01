@@ -15,6 +15,7 @@ interface MonthViewGridProps {
 
 interface WorkOrderWithRow extends WorkOrder {
   rowIndex?: number;
+  originalLineId?: string;
 }
 
 export const MonthViewGrid: React.FC<MonthViewGridProps> = ({
@@ -26,48 +27,68 @@ export const MonthViewGrid: React.FC<MonthViewGridProps> = ({
   getLineColor,
   calculateWorkOrderSpan,
 }) => {
-  // Pre-process work orders to assign them to rows
+  // Pre-process work orders to assign them to rows within their line's section
   const { workOrderRows, maxRows } = useMemo(() => {
     const rows: { [key: string]: WorkOrderWithRow[] } = {};
-    
-    // Sort all work orders by start date
-    const allWorkOrders = lines.flatMap(line => 
-      (workOrdersByLine[line.id] || []).map(wo => ({
-        ...wo,
-        lineId: line.id
-      }))
-    ).sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+    let maxRowCount = 0;
 
-    // Assign each work order to the first available row
-    allWorkOrders.forEach(wo => {
-      const woStartDate = new Date(wo.startDate);
-      const woEndDate = new Date(woStartDate);
-      woEndDate.setDate(woEndDate.getDate() + calculateWorkOrderSpan(wo) - 1);
+    // Process each line's work orders separately
+    lines.forEach((line, lineIndex) => {
+      const lineWorkOrders = workOrdersByLine[line.id] || [];
       
-      // Find first row where this work order doesn't overlap
-      let rowIndex = 0;
-      while (true) {
-        const row = rows[rowIndex] || [];
-        const hasOverlap = row.some(existingWo => {
-          const existingStart = new Date(existingWo.startDate);
-          const existingEnd = new Date(existingStart);
-          existingEnd.setDate(existingEnd.getDate() + calculateWorkOrderSpan(existingWo) - 1);
-          
-          return woStartDate <= existingEnd && woEndDate >= existingStart;
-        });
+      // Sort work orders by start date within this line
+      const sortedWorkOrders = lineWorkOrders
+        .map(wo => ({
+          ...wo,
+          originalLineId: line.id
+        }))
+        .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+
+      // For each work order in this line
+      sortedWorkOrders.forEach(wo => {
+        const woStartDate = new Date(wo.startDate);
+        const woEndDate = new Date(woStartDate);
+        woEndDate.setDate(woEndDate.getDate() + calculateWorkOrderSpan(wo) - 1);
         
-        if (!hasOverlap) {
-          rows[rowIndex] = [...row, wo];
-          (wo as WorkOrderWithRow).rowIndex = rowIndex;
-          break;
+        // Calculate base row for this line
+        const baseRow = lineIndex * 3; // Give each line 3 rows to work with
+        
+        // Find first available row within this line's section
+        let subRow = 0;
+        while (subRow < 3) { // Limit to 3 rows per line
+          const actualRow = baseRow + subRow;
+          const row = rows[actualRow] || [];
+          
+          const hasOverlap = row.some(existingWo => {
+            const existingStart = new Date(existingWo.startDate);
+            const existingEnd = new Date(existingStart);
+            existingEnd.setDate(existingEnd.getDate() + calculateWorkOrderSpan(existingWo) - 1);
+            
+            return woStartDate <= existingEnd && woEndDate >= existingStart;
+          });
+          
+          if (!hasOverlap) {
+            rows[actualRow] = [...row, wo];
+            (wo as WorkOrderWithRow).rowIndex = actualRow;
+            maxRowCount = Math.max(maxRowCount, actualRow + 1);
+            break;
+          }
+          subRow++;
         }
-        rowIndex++;
-      }
+        
+        // If no space found in the 3 rows, add to the last row
+        if (subRow === 3) {
+          const actualRow = baseRow + 2;
+          rows[actualRow] = [...(rows[actualRow] || []), wo];
+          (wo as WorkOrderWithRow).rowIndex = actualRow;
+          maxRowCount = Math.max(maxRowCount, actualRow + 1);
+        }
+      });
     });
     
     return {
       workOrderRows: rows,
-      maxRows: Object.keys(rows).length
+      maxRows: maxRowCount
     };
   }, [lines, workOrdersByLine, calculateWorkOrderSpan]);
 
@@ -126,7 +147,7 @@ export const MonthViewGrid: React.FC<MonthViewGridProps> = ({
                 >
                   <WorkOrderCard
                     wo={wo}
-                    lineId={wo.lineId || lines[0].id}
+                    lineId={wo.originalLineId || wo.lineId}
                     getLineColor={getLineColor}
                     currentDate={dateRange[startDayIndex]}
                     style={{
@@ -135,8 +156,7 @@ export const MonthViewGrid: React.FC<MonthViewGridProps> = ({
                       left: '4px',
                       right: '4px',
                       zIndex: 10,
-                      minHeight: '32px',
-                      backgroundColor: getLineColor(wo.lineId || lines[0].id)
+                      minHeight: '32px'
                     }}
                   />
                 </div>

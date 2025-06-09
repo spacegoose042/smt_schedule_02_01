@@ -13,10 +13,20 @@ import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 
 // Initialize React Query client
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1
+    }
+  }
+});
 
 // Get Clerk publishable key from environment variable
 const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+
+if (!clerkPubKey) {
+  throw new Error('VITE_CLERK_PUBLISHABLE_KEY is not set in environment variables');
+}
 
 function App() {
   return (
@@ -53,6 +63,7 @@ function App() {
               draggable
               pauseOnHover
               theme="light"
+              aria-label="Notifications"
             />
           </Router>
         </DndProvider>

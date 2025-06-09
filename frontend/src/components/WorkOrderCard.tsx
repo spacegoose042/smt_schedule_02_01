@@ -42,9 +42,9 @@ export const WorkOrderCard: React.FC<WorkOrderCardProps> = ({
         ${isDragging ? 'opacity-50' : ''}
         transition-all duration-200
         hover:shadow-md
+        ${getLineColor(wo.lineId || lineId)}
       `}
       style={{
-        backgroundColor: getLineColor(wo.lineId || lineId),
         ...style
       }}
     >
